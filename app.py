@@ -1,3 +1,9 @@
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 import os
 import time
 import json
@@ -5,38 +11,25 @@ import random
 import uuid
 import datetime
 import threading
+import logging
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
+from ai_service import get_ai_service
 
-load_dotenv()
+load_dotenv(override=True)
 
 app = Flask(__name__)
+logger = logging.getLogger("pickleball.app")
 
-# ==========================================
-# Spanner Omni Configuration
-# ==========================================
 SPANNER_EMULATOR_HOST = os.getenv("SPANNER_EMULATOR_HOST", "localhost:9010")
-SPANNER_PROJECT = os.getenv("SPANNER_PROJECT", "omni-demo")
-SPANNER_INSTANCE = os.getenv("SPANNER_INSTANCE", "omni-instance")
+SPANNER_PROJECT = os.getenv("SPANNER_PROJECT", "default")
+SPANNER_INSTANCE = os.getenv("SPANNER_INSTANCE", "default")
 SPANNER_DATABASE = os.getenv("SPANNER_DATABASE", "pickleball-db")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 if SPANNER_EMULATOR_HOST:
     os.environ["SPANNER_EMULATOR_HOST"] = SPANNER_EMULATOR_HOST
 
-# Initialize Gemini Client
-ai_client = None
-if GEMINI_API_KEY and GEMINI_API_KEY != "your-gemini-api-key":
-    try:
-        from google import genai
-        ai_client = genai.Client(api_key=GEMINI_API_KEY)
-    except Exception:
-        try:
-            import google.generativeai as legacy_genai
-            legacy_genai.configure(api_key=GEMINI_API_KEY)
-            ai_client = legacy_genai.GenerativeModel("gemini-3.8-flash")
-        except Exception as e2:
-            print(f"Warning initializing Gemini client: {e2}")
+ai_service = get_ai_service()
 
 # Spanner Client & Database State
 spanner_client = None
@@ -145,19 +138,30 @@ def get_spanner_db():
         return spanner_db
     try:
         from google.cloud import spanner
-        if spanner_client is None:
-            spanner_client = spanner.Client(project=SPANNER_PROJECT)
-        instance = spanner_client.instance(SPANNER_INSTANCE)
-        database = instance.database(SPANNER_DATABASE)
-        
-        # Test connection
-        with database.snapshot() as snapshot:
-            list(snapshot.execute_sql("SELECT 1"))
-            
-        spanner_db = database
-        spanner_connected = True
-        spanner_error = None
-        return spanner_db
+        candidate_targets = []
+        if SPANNER_PROJECT and SPANNER_INSTANCE:
+            candidate_targets.append((SPANNER_PROJECT, SPANNER_INSTANCE))
+        if ("default", "default") not in candidate_targets:
+            candidate_targets.append(("default", "default"))
+
+        last_ex = None
+        for proj, inst in candidate_targets:
+            try:
+                client = spanner.Client(project=proj)
+                instance = client.instance(inst)
+                database = instance.database(SPANNER_DATABASE)
+                with database.snapshot() as snapshot:
+                    list(snapshot.execute_sql("SELECT 1"))
+                spanner_client = client
+                spanner_db = database
+                spanner_connected = True
+                spanner_error = None
+                return spanner_db
+            except Exception as ex:
+                last_ex = ex
+        if last_ex:
+            raise last_ex
+        return None
     except Exception as e:
         spanner_connected = False
         spanner_error = str(e)
@@ -188,13 +192,12 @@ def init_database_schema_and_seed():
         except Exception as e:
             print(f"Instance check note: {e}")
 
-        # 2. Ensure Database Exists & Apply Schema
-        database = instance.database(SPANNER_DATABASE)
         all_ddls = list(TABLE_SCHEMAS.values())
+        database = instance.database(SPANNER_DATABASE, ddl_statements=all_ddls)
 
         if not database.exists():
             print(f"Creating Spanner database '{SPANNER_DATABASE}' with schema...")
-            op = database.create(ddl_statements=all_ddls)
+            op = database.create()
             op.result(30)
             print("Spanner Omni Pickleball schema created.")
         else:
@@ -405,9 +408,12 @@ def api_status():
         match_count = len(mock_matches)
         shot_count = 6
 
+    ai_info = ai_service.get_status()
+
     return jsonify({
         "spanner_connected": spanner_connected,
         "spanner_error": spanner_error,
+        "db_initialized": db_initialized,
         "emulator_host": SPANNER_EMULATOR_HOST,
         "project": SPANNER_PROJECT,
         "instance": SPANNER_INSTANCE,
@@ -418,7 +424,14 @@ def api_status():
             "matches": match_count,
             "shots": shot_count
         },
-        "gemini_configured": bool(GEMINI_API_KEY)
+        "llm_provider": ai_info["llm_provider"],
+        "model": ai_info["model"],
+        "provider_configured": ai_info["provider_configured"],
+        "service_reachable": ai_info["service_reachable"],
+        "model_available": ai_info["model_available"],
+        "gemini_configured": ai_info["gemini_configured"],
+        "ollama_reachable": ai_info["ollama_reachable"],
+        "ai_error": ai_info["error"]
     })
 
 @app.route("/api/spanner/init", methods=["POST"])
@@ -790,58 +803,26 @@ INSTRUCTIONS:
 Always use bold text and emojis for readability.
 """
 
-    if ai_client:
-        try:
-            if hasattr(ai_client, "models"):
-                res = ai_client.models.generate_content(
-                    model="gemini-3.8-flash",
-                    contents=f"{system_instruction}\n\nUser Question: {user_prompt}"
-                )
-                return jsonify({
-                    "response": res.text,
-                    "ai_source": "Gemini 3.8 Flash",
-                    "spanner_synced": True
-                })
-            elif hasattr(ai_client, "generate_content"):
-                res = ai_client.generate_content(f"{system_instruction}\n\nUser Question: {user_prompt}")
-                return jsonify({
-                    "response": res.text,
-                    "ai_source": "Gemini 1.5 Flash (Live API)",
-                    "spanner_synced": True
-                })
-        except Exception as e:
-            print(f"Gemini API invocation note: {e}")
-
-    # Fallback simulated response
-    p = user_prompt.lower()
-    if "court" in p or "book" in p or "recommend" in p or "indoor" in p:
-        resp = (
-            "🏓 **Spanner Omni Court Recommendation**\n\n"
-            "Based on live availability in our Spanner database:\n"
-            "- **For Climate-Controlled Play**: **Center Championship Court** (Pro-Cushion Acrylic, $45/hr) or **Training Pavilion Court 3** ($35/hr).\n"
-            "- **For Scenic Casual Games**: **Grandstand Court 2** (Outdoor Hardcourt, $30/hr).\n\n"
-            "💡 *Cloud Spanner guarantees zero double-booking conflicts with distributed ACID transactions.*"
+    try:
+        ai_res = ai_service.generate(
+            prompt=user_prompt,
+            system_instruction=system_instruction,
+            feature_name="concierge_chat"
         )
-    elif "kitchen" in p or "rule" in p or "nvz" in p:
-        resp = (
-            "📖 **Pickleball Rule Pro-Tip: The Non-Volley Zone (The Kitchen)**\n\n"
-            "1. **No Volleys Inside the Kitchen**: You cannot hit the ball out of the air while standing in the 7-foot zone or on the line.\n"
-            "2. **Momentum Counts**: If momentum carries your foot into the kitchen after a volley, it is a fault!\n"
-            "3. **Bounces Allowed**: If the ball bounces in the kitchen first, you can legally step in and return it."
-        )
-    else:
-        resp = (
-            f"🏓 **Spanner Omni AI Concierge**\n\n"
-            f"I analyzed your request: *\"{user_prompt}\"*\n\n"
-            f"- We have {len(courts_context)} state-of-the-art courts connected to Cloud Spanner.\n"
-            f"- Real-time bookings and matchmaking requests are updated with instant transaction consistency."
-        )
-
-    return jsonify({
-        "response": resp,
-        "ai_source": "Spanner Omni AI Engine",
-        "spanner_synced": True
-    })
+        return jsonify({
+            "response": ai_res.text,
+            "ai_source": ai_res.source_label,
+            "spanner_synced": True,
+            "duration_seconds": ai_res.duration_seconds
+        })
+    except Exception as e:
+        logger.error("AI Concierge generation error: %s", str(e))
+        return jsonify({
+            "error": str(e),
+            "response": f"⚠️ [{ai_service.provider_name.upper()} Inference Error]: {str(e)}",
+            "ai_source": f"{ai_service.provider_name.title()} (Error)",
+            "spanner_synced": True
+        }), 502
 
 @app.route("/api/execute-shot", methods=["POST"])
 def api_execute_shot():
@@ -900,27 +881,20 @@ def api_execute_shot():
         tactical_feedback = f"🎾 **Solid Rally Play**: OmniBot responded with a controlled reset to {bot_target_zone}."
 
     agent_text = tactical_feedback
-    if ai_client:
-        try:
-            prompt = f"""
-            You are the OmniBot AI Pickleball Coach running on Spanner Omni.
-            The player just executed:
-            - Shot: {user_shot} ({speed} mph, {spin})
-            - Placement: From {from_zone} to {to_zone}
-            - OmniBot Counter: {bot_counter_shot} to {bot_target_zone} ({bot_speed} mph)
+    prompt = f"""You are the OmniBot AI Pickleball Coach running on Spanner Omni.
+The player just executed:
+- Shot: {user_shot} ({speed} mph, {spin})
+- Placement: From {from_zone} to {to_zone}
+- OmniBot Counter: {bot_counter_shot} to {bot_target_zone} ({bot_speed} mph)
 
-            Provide 2-3 sentences of sharp tactical coaching advice on this specific exchange. Use emojis and bold highlights.
-            """
-            if hasattr(ai_client, "models"):
-                res = ai_client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
-                if res.text:
-                    agent_text = res.text
-            elif hasattr(ai_client, "generate_content"):
-                res = ai_client.generate_content(prompt)
-                if res.text:
-                    agent_text = res.text
-        except Exception as e:
-            print(f"Gemini live coaching note: {e}")
+Provide 2-3 sentences of sharp tactical coaching advice on this specific exchange. Use emojis and bold highlights."""
+    try:
+        ai_res = ai_service.generate(prompt=prompt, feature_name="shot_tactical_coaching")
+        if ai_res.text:
+            agent_text = ai_res.text
+    except Exception as e:
+        logger.error("Shot coaching generation error: %s", str(e))
+        agent_text = f"⚠️ [{ai_service.provider_name.upper()} Coaching Error]: {str(e)}"
 
     # Record Shot Telemetry to Spanner Omni
     db = get_spanner_db()
@@ -971,30 +945,23 @@ def api_rally_end():
         f"Score is now **You: {user_score} | {bot_label}: {bot_score}**."
     )
 
-    if ai_client:
-        prompt = f"""
-        You are the official Gemini AI Pickleball Coach & Tournament Referee running on Spanner Omni.
-        A continuous pickleball rally just concluded:
-        - Point Winner: {'Human Player' if winner == 'player' else bot_label}
-        - Bot Difficulty Level: {bot_difficulty} DUPR
-        - Concluding Fault / Winner Event: {fault_type}
-        - Total Rally Length: {rally_length} shots
-        - Shot Sequence: {json.dumps(shot_sequence)}
-        - Updated Match Score: Player {user_score} - Bot {bot_score}
+    prompt = f"""You are the official Pickleball Coach & Tournament Referee running on Spanner Omni.
+A continuous pickleball rally just concluded:
+- Point Winner: {'Human Player' if winner == 'player' else bot_label}
+- Bot Difficulty Level: {bot_difficulty} DUPR
+- Concluding Fault / Winner Event: {fault_type}
+- Total Rally Length: {rally_length} shots
+- Shot Sequence: {json.dumps(shot_sequence)}
+- Updated Match Score: Player {user_score} - Bot {bot_score}
 
-        Give 2-3 sentences of sharp tactical coaching on why this point was won or lost against a {bot_difficulty} DUPR opponent, referencing specific pickleball strategy (e.g. 2-bounce double bounce rule, NVZ positioning, reset technique, paddle control, speedup timing, passing angles). Use bold text and emojis.
-        """
-        try:
-            if hasattr(ai_client, "models"):
-                res = ai_client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
-                if res.text:
-                    analysis = res.text
-            elif hasattr(ai_client, "generate_content"):
-                res = ai_client.generate_content(prompt)
-                if res.text:
-                    analysis = res.text
-        except Exception as e:
-            print(f"Gemini rally analysis note: {e}")
+Give 2-3 sentences of sharp tactical coaching on why this point was won or lost against a {bot_difficulty} DUPR opponent, referencing specific pickleball strategy (e.g. 2-bounce double bounce rule, NVZ positioning, reset technique, paddle control, speedup timing, passing angles). Use bold text and emojis."""
+    try:
+        ai_res = ai_service.generate(prompt=prompt, feature_name="rally_analysis")
+        if ai_res.text:
+            analysis = ai_res.text
+    except Exception as e:
+        logger.error("Rally analysis generation error: %s", str(e))
+        analysis = f"⚠️ [{ai_service.provider_name.upper()} Rally Analysis Error]: {str(e)}"
 
     session_id = f"game_{int(time.time() * 1000)}"
     mock_game_sessions.insert(0, {
@@ -1196,18 +1163,19 @@ def api_get_performance():
 
 
 if __name__ == "__main__":
+    ai_status = ai_service.get_status()
     print("=" * 60)
-    print("  🏓 Starting Spanner Omni Pickleball Game")
+    print("  Starting Spanner Omni Pickleball Game")
     print(f"  Spanner Endpoint:  {SPANNER_EMULATOR_HOST}")
     print(f"  Spanner Project:   {SPANNER_PROJECT}")
     print(f"  Spanner Instance:  {SPANNER_INSTANCE}")
     print(f"  Spanner Database:  {SPANNER_DATABASE}")
-    print(f"  Gemini API Key:    {'Configured' if GEMINI_API_KEY else 'Not set'}")
+    print(f"  AI Provider:       {ai_status['llm_provider']}")
+    print(f"  AI Model:          {ai_status['model']}")
+    print(f"  AI Service Status: {'Reachable' if ai_status['service_reachable'] else 'Unreachable/Unverified'}")
     print("=" * 60)
 
-    # 1. Run schema check & seed asynchronously in background so Flask starts instantly
     threading.Thread(target=init_database_schema_and_seed, daemon=True).start()
 
-    # 2. Start Flask Web Server
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)

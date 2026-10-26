@@ -95,10 +95,14 @@
         <span id="soundText" class="text-[11px] hidden md:inline">Audio</span>
       </button>
 
-      <!-- Status Indicator -->
       <div class="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400">
         <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
         <span class="text-slate-300 font-medium">Omni Live</span>
+      </div>
+
+      <div id="llmStatusBadge" class="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400">
+        <span id="llmStatusDot" class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span id="llmStatusText" class="text-slate-300 font-medium">Local Gemma 4</span>
       </div>
     </div>
   </header>
@@ -262,21 +266,20 @@
                 <i class="fa-solid fa-brain"></i>
               </div>
               <div>
-                <h3 class="font-bold text-sm text-white">Gemini Tactical Coach</h3>
+                <h3 class="font-bold text-sm text-white" id="coachHeaderTitle">AI Tactical Coach</h3>
                 <p class="text-[10px] text-emerald-300">Live Spanner Omni Graph Grounded</p>
               </div>
             </div>
             <span class="text-[10px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-semibold" id="aiStatusBadge">Live Referee</span>
           </div>
 
-          <!-- Dynamic AI Feedback Narrative -->
           <div class="p-4 bg-slate-950 border border-slate-800/80 rounded-xl flex-1 overflow-y-auto custom-scrollbar space-y-3">
             <div class="flex items-center gap-2 text-xs font-semibold text-emerald-400">
               <i class="fa-solid fa-comment-dots"></i>
               <span id="coachTitle">Continuous Match Briefing</span>
             </div>
             <p class="text-xs text-slate-300 leading-relaxed" id="coachText">
-              Welcome to the official <strong>Spanner Omni Pickleball Arena</strong>. Move your paddle with <strong>Mouse or Arrow Keys / WASD</strong>. Rallies continue uninterrupted until a player faults (NVZ Kitchen Volley, Two-Bounce Rule violation, Out of Bounds, or Net Ball). When a point ends, Gemini provides instant referee and tactical coaching!
+              Welcome to the official <strong>Spanner Omni Pickleball Arena</strong>. Move your paddle with <strong>Mouse or Arrow Keys / WASD</strong>. Rallies continue uninterrupted until a player faults (NVZ Kitchen Volley, Two-Bounce Rule violation, Out of Bounds, or Net Ball). When a point ends, the AI Coach provides instant referee and tactical coaching!
             </p>
           </div>
 
@@ -496,7 +499,7 @@
               <p class="text-[11px] text-slate-400">Grounded in Live Facility SQL & Rules Database</p>
             </div>
           </div>
-          <span class="text-[10px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-full font-semibold">Gemini + Spanner RAG</span>
+          <span class="text-[10px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-full font-semibold" id="ragBadge">AI + Spanner RAG</span>
         </div>
 
         <!-- Chat History Stream -->
@@ -545,7 +548,7 @@
           <i class="fa-solid fa-database text-amber-400"></i> Live Spanner Grounding State
         </h3>
         <p class="text-xs text-slate-400 leading-relaxed">
-          Every concierge query executes a real-time snapshot transaction against Spanner Omni tables (<code>GameSessions</code>, <code>Courts</code>, <code>Bookings</code>, <code>Shots</code>), injecting live ACID data directly into Gemini's system instruction.
+          Every concierge query executes a real-time snapshot transaction against Spanner Omni tables (<code>GameSessions</code>, <code>Courts</code>, <code>Bookings</code>, <code>Shots</code>), injecting live ACID data directly into the AI model's system instruction.
         </p>
 
         <div class="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-2 font-mono text-[11px]">
@@ -1215,7 +1218,7 @@
 
       // Post-Rally Gemini AI Tactical Analysis & Spanner Commit
       document.getElementById("coachTitle").innerText = `Referee & Coach: ${winner === 'player' ? 'Point Scored' : 'Fault Analysis'}`;
-      document.getElementById("coachText").innerHTML = `<em>Gemini Referee analyzing ${rallyCount}-shot rally exchange...</em>`;
+      document.getElementById("coachText").innerHTML = `<em>AI Coach analyzing ${rallyCount}-shot rally exchange...</em>`;
 
       fetch("/api/rally-end", {
         method: "POST",
@@ -1722,7 +1725,7 @@
             🤖
           </div>
           <div class="bg-slate-900 border border-slate-800 p-3 rounded-2xl text-xs text-slate-400 italic">
-            <i class="fa-solid fa-spinner fa-spin text-emerald-400 mr-1.5"></i> Querying Spanner SQL tables & Gemini reasoning...
+            <i class="fa-solid fa-spinner fa-spin text-emerald-400 mr-1.5"></i> Querying Spanner SQL tables & AI reasoning...
           </div>
         </div>
       `;
@@ -1751,7 +1754,7 @@
             </div>
             <div class="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl text-xs text-slate-200 space-y-2 max-w-xl">
               <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono pb-1 border-b border-slate-800">
-                <span>${data.ai_source || "Gemini Live"}</span>
+                <span>${data.ai_source || "AI Live"}</span>
                 <span class="text-emerald-400 font-bold">✓ Spanner Synced</span>
               </div>
               <p class="leading-relaxed">${formatted}</p>
@@ -1769,7 +1772,7 @@
               ⚠️
             </div>
             <div class="bg-slate-900 border border-slate-800 p-3 rounded-2xl text-xs text-rose-300">
-              Error querying Gemini Concierge: ${err.message}
+              Error querying AI Concierge: ${err.message}
             </div>
           </div>
         `;
@@ -1777,8 +1780,43 @@
       });
     }
 
+    function loadAppStatus() {
+      fetch("/api/status")
+        .then(r => r.json())
+        .then(d => {
+          const isOllama = d.llm_provider === "ollama";
+          const providerLabel = isOllama ? "Local Gemma 4" : "Gemini";
+          const fullLabel = `${providerLabel} (${d.model})`;
+
+          const statusText = document.getElementById("llmStatusText");
+          if (statusText) statusText.innerText = fullLabel;
+
+          const coachTitle = document.getElementById("coachHeaderTitle");
+          if (coachTitle) coachTitle.innerText = `${providerLabel} Tactical Coach`;
+
+          const aiBadge = document.getElementById("aiStatusBadge");
+          if (aiBadge) {
+            aiBadge.innerText = d.service_reachable ? `${providerLabel} Active` : `${providerLabel} Offline`;
+            if (!d.service_reachable) {
+              aiBadge.className = "text-[10px] font-mono bg-rose-500/15 text-rose-400 border border-rose-500/30 px-2 py-0.5 rounded-full font-semibold";
+            }
+          }
+
+          const ragBadge = document.getElementById("ragBadge");
+          if (ragBadge) ragBadge.innerText = `${providerLabel} + Spanner RAG`;
+
+          const dot = document.getElementById("llmStatusDot");
+          if (dot && !d.service_reachable) {
+            dot.classList.remove("bg-emerald-400");
+            dot.classList.add("bg-rose-500");
+          }
+        })
+        .catch(err => console.warn("Status fetch note:", err));
+    }
+
     window.addEventListener("DOMContentLoaded", () => {
       renderCourt();
+      loadAppStatus();
       const today = new Date().toISOString().split('T')[0];
       const bookDateInput = document.getElementById("bookDate");
       if (bookDateInput) bookDateInput.value = today;
